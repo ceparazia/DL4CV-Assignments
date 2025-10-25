@@ -529,14 +529,20 @@ class DeepConvNet(object):
         for i in range(1,num_conv+1):  #先不管最后FC层的那一组参数
             W_i_shape=(F[i],F[i-1],3,3)
             #H{i-1}是(N,F[i-1],H',W')。经过W{i}得到H{i}是(N,F[i],H',W')
-            self.params[f'W{i}']=weight_scale*torch.randn(W_i_shape,
+            if weight_scale=="kaiming":
+                self.params[f'W{i}']=kaiming_initializer(F[i],F[i-1],K=3,
+                                                        relu=True,
+                                                        device=device,
+                                                        dtype=dtype)
+            else:
+                self.params[f'W{i}']=weight_scale*torch.randn(W_i_shape,
                                                           dtype=dtype,
                                                           device=device)
             self.params[f'b{i}']=torch.zeros(F[i],dtype=dtype,device=device)
-            # if self.batchnorm==True:
-            #     self.params[f'gamma{i}']=torch.ones(F[i],dtype=dtype,device=device)
-            #     self.params[f'beta{i}']=torch.zeros(F[i],dtype=dtype,device=device)
-            #     #gamma{i}和beta{i}应当是长度等于信道数的向量
+            if self.batchnorm==True:
+                self.params[f'gamma{i}']=torch.ones(F[i],dtype=dtype,device=device)
+                self.params[f'beta{i}']=torch.zeros(F[i],dtype=dtype,device=device)
+                #gamma{i}和beta{i}应当是长度等于信道数的向量
 
         
         new_H=H
@@ -547,7 +553,13 @@ class DeepConvNet(object):
             new_W//=2
         #经过num_pool次pool，最后FC层的input是(N,F[-1],new_H,new_W)
         D=F[-1]*new_H*new_W
-        self.params[f'W{num_conv+1}']=weight_scale*torch.randn(D,num_classes,
+        if weight_scale=="kaiming":
+            self.params[f'W{num_conv+1}']=kaiming_initializer(D,num_classes,
+                                                        relu=False,
+                                                        device=device,
+                                                        dtype=dtype)
+        else:
+            self.params[f'W{num_conv+1}']=weight_scale*torch.randn(D,num_classes,
                                                                dtype=dtype,
                                                           device=device)
         self.params[f'b{num_conv+1}']=torch.zeros(num_classes,dtype=dtype,device=device)
@@ -675,18 +687,27 @@ class DeepConvNet(object):
 
         num_conv=self.num_layers-1
         input=X
-        caches=[123]  #cache[0]占位用的
+        caches=[123]  #cache[0]是占位用的，随便填个123
         for i in range(1,num_conv+1):
             W=self.params[f'W{i}']
             b=self.params[f'b{i}']
-            # if self.batchnorm==True:
-            #     gamma=self.params[f'gamma{i}']
-            #     beta=self.params[f'beta{i}']
-            #     bn_result,bn_cache=
+
             if (i-1) in self.max_pools:
-                out,newcache=Conv_ReLU_Pool.forward(input,W,b,conv_param,pool_param)
+                if self.batchnorm==True:
+                    bn_param=self.bn_params[i-1]
+                    gamma=self.params[f'gamma{i}']
+                    beta=self.params[f'beta{i}']
+                    out,newcache=Conv_BatchNorm_ReLU_Pool.forward(input,W,b,gamma,beta,conv_param,bn_param,pool_param)
+                else:
+                    out,newcache=Conv_ReLU_Pool.forward(input,W,b,conv_param,pool_param)
             else:
-                out,newcache=Conv_ReLU.forward(input,W,b,conv_param)
+                if self.batchnorm==True:
+                    bn_param=self.bn_params[i]
+                    gamma=self.params[f'gamma{i}']
+                    beta=self.params[f'beta{i}']
+                    out,newcache=Conv_BatchNorm_ReLU.forward(input,W,b,gamma,beta,conv_param,bn_param)
+                else:
+                    out,newcache=Conv_ReLU.forward(input,W,b,conv_param)
             
             caches.append(newcache)
             input=out
@@ -732,9 +753,20 @@ class DeepConvNet(object):
         
         for i in range(num_conv,0,-1):
             if (i-1) in self.max_pools:
-                dinput,dW,db=Conv_ReLU_Pool.backward(dout,caches[i])
+                if self.batchnorm==True:
+                    dinput,dW,db,dgamma,dbeta=Conv_BatchNorm_ReLU_Pool.backward(dout,caches[i])
+                    grads[f'gamma{i}']=dgamma
+                    grads[f'beta{i}']=dbeta
+                else:
+                    dinput,dW,db=Conv_ReLU_Pool.backward(dout,caches[i])
             else:
-                dinput,dW,db=Conv_ReLU.backward(dout,caches[i])
+                if self.batchnorm==True:
+                    dinput,dW,db,dgamma,dbeta=Conv_BatchNorm_ReLU.backward(dout,caches[i])
+                    grads[f'gamma{i}']=dgamma
+                    grads[f'beta{i}']=dbeta
+                else:
+                    dinput,dW,db=Conv_ReLU.backward(dout,caches[i])
+            
             W=self.params[f'W{i}']
             loss+=reg*(W*W).sum()
             dW+=2*reg*W
@@ -756,7 +788,8 @@ def find_overfit_parameters():
     # model achieves 100% training accuracy within 30 epochs. #
     ###########################################################
     # Replace "pass" statement with your code
-    pass
+    weight_scale = 1  # Experiment with this!
+    learning_rate =0.05  # Experiment with this!
     ###########################################################
     #                       END OF YOUR CODE                  #
     ###########################################################
@@ -771,7 +804,30 @@ def create_convolutional_solver_instance(data_dict, dtype, device):
     # CIFAR-10 within 60 seconds.                           #
     #########################################################
     # Replace "pass" statement with your code
-    pass
+    model=DeepConvNet(
+        input_dims=(3,32,32),
+        num_filters=[32,64,128,256],
+        max_pools=[0,1,2,3],
+        batchnorm=False,
+        num_classes=10,
+        weight_scale="kaiming",
+        reg=3e-4,
+        dtype=dtype,
+        device=device
+    )
+
+    solver=Solver(
+        model,
+        data_dict,
+        update_rule=adam,
+        optim_config={'learning_rate':5e-4},
+        lr_decay=0.95,
+        batch_size=128,
+        num_epochs=25,
+        print_every=1000,
+        device=device
+    )
+
     #########################################################
     #                  END OF YOUR CODE                     #
     #########################################################
@@ -813,7 +869,8 @@ def kaiming_initializer(Din, Dout, K=None, relu=True, device='cpu',
         # and device.                                                     #
         ###################################################################
         # Replace "pass" statement with your code
-        pass
+        fan_in=Din
+        weight=(torch.tensor(gain/fan_in).sqrt())*torch.randn(Din,Dout,dtype=dtype,device=device)
         ###################################################################
         #                            END OF YOUR CODE                     #
         ###################################################################
@@ -827,7 +884,9 @@ def kaiming_initializer(Din, Dout, K=None, relu=True, device='cpu',
         # and device.                                                     #
         ###################################################################
         # Replace "pass" statement with your code
-        pass
+        fan_in=Din*K*K
+        weight=(torch.tensor(gain/fan_in).sqrt())*torch.randn(Din,Dout,K,K,dtype=dtype,device=device)
+
         ###################################################################
         #                         END OF YOUR CODE                        #
         ###################################################################
@@ -916,7 +975,21 @@ class BatchNorm(object):
             # (https://arxiv.org/abs/1502.03167) might prove to be helpful.  #
             ##################################################################
             # Replace "pass" statement with your code
-            pass
+            mean=x.mean(dim=0)
+            var=x.var(dim=0,unbiased=False)
+            #这里一定要写上unbiased=False，使用的才是统计总体方差的有偏估计
+            #如果不写unbiased=False，是使用bessel修正过的方差公式，后面反向传播结果会出错的
+
+            x_hat=(x-mean)/((var+eps).sqrt())  #(N,D)
+            out=gamma*x_hat+beta  #(N,D)
+            cache=(x,mean,var,x_hat,gamma,beta,eps)
+
+            running_mean=momentum*running_mean+(1-momentum)*mean
+            running_var=momentum*running_var+(1-momentum)*var
+
+            #这两个running变量是一个全局的累计量，在test的时候使用
+
+
             ################################################################
             #                           END OF YOUR CODE                   #
             ################################################################
@@ -929,7 +1002,10 @@ class BatchNorm(object):
             # in the out variable.                                         #
             ################################################################
             # Replace "pass" statement with your code
-            pass
+            x_hat=(x-running_mean)/((running_var+eps).sqrt())
+            out=gamma*x_hat+beta
+
+            cache=None  #测试时不需要cache
             ################################################################
             #                      END OF YOUR CODE                        #
             ################################################################
@@ -971,7 +1047,24 @@ class BatchNorm(object):
         # Don't forget to implement train and test mode separately.         #
         #####################################################################
         # Replace "pass" statement with your code
-        pass
+
+        x,mean,var,x_hat,gamma,beta,eps=cache
+        N,D=x.shape
+
+        dbeta=dout.sum(dim=0)
+        dgamma=(dout*x_hat).sum(dim=0)             #(D,)
+        dx_hat=dout*gamma
+
+        #前向传播是x->mean->var
+        #x_hat=(x-mean)/((var+eps).sqrt())
+        #反向传播先求出dvar。此处把x和mean当作常数
+        sigma=(var+eps).sqrt()
+        dvar=(dx_hat*(x-mean)*(-0.5)/(sigma**3)).sum(dim=0)
+        dmean=(dx_hat*(-1/sigma)).sum(dim=0)+dvar*((-2*(x-mean)).sum(dim=0)/N)
+        # dx=dx_hat/sigma+dmean/N+dvar*(2*(x-mean)*(1-1/N)/N)   这个会有偏差
+        dx=dx_hat/sigma+dmean/N+dvar*(2*(x-mean)/N)
+
+
         #################################################################
         #                      END OF YOUR CODE                         #
         #################################################################
@@ -1004,7 +1097,17 @@ class BatchNorm(object):
         # single 80-character line.                                       #
         ###################################################################
         # Replace "pass" statement with your code
-        pass
+
+        x,mean,var,x_hat,gamma,beta,eps=cache
+        N,D=x.shape
+        dbeta=dout.sum(dim=0)
+        dgamma=(dout*x_hat).sum(dim=0)
+        dx_hat=dout*gamma
+
+        sigma=(var+eps).sqrt()  #(D,)
+        dx = (gamma/sigma) * (dout - dout.mean(dim=0) - x_hat * (dout * x_hat).mean(dim=0))
+        #尝试数学推导但是一直弄不对。只能记住这个，要用的时候拿来用
+
         #################################################################
         #                        END OF YOUR CODE                       #
         #################################################################
@@ -1052,7 +1155,17 @@ class SpatialBatchNorm(object):
         # ours is less than five lines.                                #
         ################################################################
         # Replace "pass" statement with your code
-        pass
+        x_trans=x.permute(0,2,3,1)  #(N,H,W,C)
+        #这是为了展平后能正确恢复性质
+        x_flatten=x_trans.reshape(-1,x.shape[1])  #(N*H*W,C)
+        out_flatten,cache=BatchNorm.forward(x_flatten,gamma,beta,bn_param)
+        #cache=(x_flatten,mean,var,x_flatten_hat,gamma,beta,eps)
+
+        out_trans=out_flatten.reshape(x_trans.shape)  #(N,H,W,C)
+        out=out_trans.permute(0,3,1,2)  #(N,C,H,W)
+
+
+
         ################################################################
         #                       END OF YOUR CODE                       #
         ################################################################
@@ -1083,7 +1196,12 @@ class SpatialBatchNorm(object):
         # ours is less than five lines.                                 #
         #################################################################
         # Replace "pass" statement with your code
-        pass
+        
+        N,C,H,W=dout.shape
+        dout_flatten=(dout.permute(0,2,3,1)).reshape(-1,C)
+        dx_flatten,dgamma,dbeta=BatchNorm.backward(dout_flatten,cache)
+        
+        dx=(dx_flatten.reshape(N,H,W,C)).permute(0,3,1,2)  #(N,C,H,W)
         ##################################################################
         #                       END OF YOUR CODE                         #
         ##################################################################
