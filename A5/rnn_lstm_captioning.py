@@ -827,10 +827,17 @@ def dot_product_attention(prev_h, A):
     A_flatten=torch.flatten(A,start_dim=2,end_dim=-1)  #(N,H,16)
     prev_h_1=torch.unsqueeze(prev_h,dim=1)  #(N,1,H)
     attn_weights=torch.bmm(prev_h_1,A_flatten)/(math.sqrt(H))  #(N,1,16)
+    # 一共有N批
+    # 每一批，本质上是1个长度为H的向量与16个长度为H的向量依次作点积，得到16个标量相似度，拼成一个(1,16)的向量
+    # 为了避免点积过大，除以(math.sqrt(H))
+    # 所以N批共得到N组标量相似度，形状是(N,1,16)
     attn_weights=attn_weights.squeeze(dim=1).softmax(dim=1) #(N,16)
+    # 如果考虑N批中的一批，一个长度为16的向量，就表示了prev_h（长度H）与4*4的特征图的每一个特征向量（长度H）的相似度
+    # torch.softmax(x,dim=k)表示在k这个维度上指数化、再归一化。最后会满足x.sum(dim=k)=1
+    # 归一化的相似度就是注意力权重权重(N,H,16)，表示了next_h对于特征图的每一部分的注意力强弱
 
     attn=torch.bmm(A_flatten,torch.unsqueeze(attn_weights,dim=2))  #(N,H,1)
-    attn=attn.squeeze(dim=2) #(N,H)
+    attn=attn.squeeze(dim=2) #(N,H)  这个形状与prev_h、next_h相同，后面是要参与到计算next_h的过程中的
 
     attn_weights=attn_weights.reshape(N,D_a,D_a)  #(N,4,4)
     ##########################################################################

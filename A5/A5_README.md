@@ -1,0 +1,1 @@
+transformers.py的EncoderBlock和DecoderBlock的实现可能有问题，用ipynb中的单元格进行测试的时候相对误差一直很大，我排查了很久也没有找出原因。但是后续训练模型可以看到损失正常下降，最后的验证集准确率也很高。
