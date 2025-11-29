@@ -31,7 +31,11 @@ def content_loss(content_weight, content_current, content_original):
     # TODO: Compute the content loss for style transfer.                       #
     ############################################################################
     # Replace "pass" statement with your code
-    pass
+    F=content_current.flatten(2,3).squeeze()  #(C,HW)
+    P=content_original.flatten(2,3).squeeze()  #(C,HW)
+    loss=content_weight*((F-P)*(F-P)).sum()
+    return loss
+
     ############################################################################
     #                               END OF YOUR CODE                           #
     ############################################################################
@@ -57,7 +61,12 @@ def gram_matrix(features, normalize=True):
     # Don't forget to implement for both normalized and non-normalized version #
     ############################################################################
     # Replace "pass" statement with your code
-    pass
+    N,C,H,W=features.shape
+    F=features.flatten(2,3)   #(N,C,HW)
+    F_t=F.permute(0,2,1)  #(N,HW,C)
+    gram=torch.bmm(F,F_t)  #(N,C,C)
+    if normalize:
+       gram=gram/(H*W*C)
     ############################################################################
     #                               END OF YOUR CODE                           #
     ############################################################################
@@ -89,7 +98,14 @@ def style_loss(feats, style_layers, style_targets, style_weights):
     # You will need to use your gram_matrix function.                          #
     ############################################################################
     # Replace "pass" statement with your code
-    pass
+    style_loss=0
+    for i in range(len(style_layers)):
+        l=style_layers[i]
+        G=style_targets[i]
+        G1=gram_matrix(feats[l])
+        layer_loss=style_weights[i]*(((G-G1)**2).sum())
+        style_loss+=layer_loss
+    return style_loss
     ############################################################################
     #                               END OF YOUR CODE                           #
     ############################################################################
@@ -112,7 +128,13 @@ def tv_loss(img, tv_weight):
     # Your implementation should be vectorized and not require any loops!      #
     ############################################################################
     # Replace "pass" statement with your code
-    pass
+    img_zuoyiyige=img[:,:,1:,:]  #(1,3,H-1,W)，把原始图像左移一格
+    img_shangyiyige=img[:,:,:,1:]  #(1,3,H,W-1)，把原始图像上移一格
+    loss=0
+    loss+=((img[:,:,:-1,:]-img_zuoyiyige)**2).sum()
+    loss+=((img[:,:,:,:-1]-img_shangyiyige)**2).sum()
+    loss=tv_weight*loss
+    return loss
     ############################################################################
     #                               END OF YOUR CODE                           #
     ############################################################################
@@ -139,7 +161,18 @@ def guided_gram_matrix(features, masks, normalize=True):
   # this problem.                                                              #
   ##############################################################################
   # Replace "pass" statement with your code
-  pass
+  N,R,C,H,W=features.shape
+  F=torch.zeros_like(features)  #(N,R,C,H,W)
+  guided_gram=torch.zeros([N,R,C,C],device=features.device)
+  for r in range(R):
+      fr=features[:,r]  #(N,C,H,W)
+      mr=masks[:,r].unsqueeze(dim=1)  #(N,1,H,W)
+      Fr=(fr*mr).flatten(2,3)  #(N,C,HW)
+      Gr=torch.bmm(Fr,Fr.permute(0,2,1))  #(N,C,C)
+      guided_gram[:,r]=Gr
+  if normalize:
+      guided_gram/=H*W*C
+  return guided_gram
   ##############################################################################
   #                               END OF YOUR CODE                             #
   ##############################################################################
@@ -169,7 +202,14 @@ def guided_style_loss(feats, style_layers, style_targets, style_weights, content
     # TODO: Computes the guided style loss at a set of layers.                 #
     ############################################################################
     # Replace "pass" statement with your code
-    pass
+    style_loss=0
+    for i in range(len(style_layers)):
+        l=style_layers[i]
+        G=style_targets[i]
+        G1=guided_gram_matrix(feats[l],content_masks[l])
+        layer_loss=style_weights[i]*(((G-G1)**2).sum())
+        style_loss+=layer_loss
+    return style_loss
     ############################################################################
     #                               END OF YOUR CODE                           #
     ############################################################################

@@ -41,7 +41,13 @@ def compute_saliency_maps(X, y, model):
     # Hint: X.grad.data stores the gradients                                     #
     ##############################################################################
     # Replace "pass" statement with your code
-    pass
+    scores=model(X)
+    N=y.shape[0]
+    correct_scores=scores[torch.arange(N),y]
+    loss=correct_scores.sum()   #要最大化正确类别的分数，所以要增大这个loss
+    loss.backward()
+    dX=X.grad.data   # (N,3,H,W)
+    saliency,_=(dX.abs()).max(dim=1)   # (N,H,W)
     ##############################################################################
     #               END OF YOUR CODE                                             #
     ##############################################################################
@@ -84,7 +90,31 @@ def make_adversarial_attack(X, target_y, model, max_iter=100, verbose=True):
     # You can print your progress over iterations to check your algorithm.       #
     ##############################################################################
     # Replace "pass" statement with your code
-    pass
+    max_score=-1e9
+    for it in range(max_iter):
+        if X_adv.grad is not None:
+            X_adv.grad.zero_()
+        scores=model(X_adv)  # (1,C)
+        target_score,pred_class=scores.max(dim=1)  # 两个都是(1,)
+        target_score=target_score[0] # scalar
+        pred_class=pred_class[0] # scalar
+        max_score=max(target_score,max_score)
+        if pred_class==target_y:
+            if verbose:
+                print(f"在第{it}次迭代成功欺骗模型")
+            break
+
+        loss=scores[0,target_y]  # scalar
+        loss.backward()
+        g=X_adv.grad.data  # (1,3,224,224)
+        
+
+        dX= learning_rate*g/((torch.sum(g*g)).sqrt())
+        X_adv.data+=dX   # 不能用X_adv+=dX，那样会破坏梯度图
+
+        if verbose:
+            print(f'Iteration {it}: target score {target_score:.3f}, max score {max_score:.3f}')
+        
     ##############################################################################
     #                             END OF YOUR CODE                               #
     ##############################################################################
@@ -119,7 +149,11 @@ def class_visualization_step(img, target_y, model, **kwargs):
     # after each step.                                                     #
     ########################################################################
     # Replace "pass" statement with your code
-    pass
+    scores=model(img)
+    loss=scores[0,target_y]-l2_reg*(torch.sum(img*img))
+    loss.backward()
+    img.data+=img.grad*learning_rate
+    img.grad.zero_()
     ########################################################################
     #                             END OF YOUR CODE                         #
     ########################################################################
